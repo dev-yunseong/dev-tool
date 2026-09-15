@@ -53,7 +53,12 @@ script path is not a reason to wrap it.
 5. Write the command files under `<root>/.dev/commands/`. See "Designing
    the commands" below, and read `references/command-contract.md` for the
    full file contract before writing one.
-6. Run `./dev docs` to fill the command table in `DEV_TOOL.md`.
+6. Optionally copy `templates/commands/branch.sh` to
+   `<root>/.dev/commands/branch.sh` when the project has more than one
+   component whose branches move independently — submodules, or sibling
+   repositories listed in `.dev/config.sh`. A single-repository project
+   does not need it. See "The `branch` command" below.
+7. Run `./dev docs` to fill the command table in `DEV_TOOL.md`.
 
 Do not edit anything under `templates/` while installing — copy from it.
 
@@ -89,6 +94,73 @@ defect, not a feature. See `references/command-contract.md` for the full
 contract of `dev_ask`, `dev_ask_secret`, `dev_confirm`, `dev_config_set`,
 and `dev_config_get`.
 
+## The `branch` command
+
+`./dev branch` shows and aligns which branch each component of a
+multi-component project sits on — submodules, or sibling repositories the
+project lists in `.dev/config.sh`. A ready-made command file,
+`templates/commands/branch.sh`, ships with the skill; copy it in rather
+than writing an equivalent by hand.
+
+Install it in a project with more than one component whose branches move
+independently. A single-repository project does not need it.
+
+### Component discovery
+
+`branch` finds the component list in this order:
+
+1. the `DEV_COMPONENTS` array in `.dev/config.sh`
+2. the submodule paths in `.gitmodules`
+3. the repository itself, if neither of the above is present
+
+### `branch show`
+
+Prints one row per component: its name, whether it has uncommitted
+changes, and its current branch. A detached HEAD shows as the short
+commit instead of a branch name. A path that is not a git repository
+shows its change column as unknown rather than clean — a git repository
+can be clean or dirty, but a directory that is not a repository at all is
+neither, and marking it unknown keeps that apart from an actually clean
+component at a glance.
+
+### `branch use <branch> [--fallback <branch>] [--fetch] [--dry-run]`
+
+Moves every component onto `<branch>` where that branch exists, and onto
+the fallback (default `main`) where it does not. A branch that exists
+only on `origin` is checked out as a new tracking branch.
+
+- `--fallback <branch>` — branch to use instead of `main` when `<branch>`
+  does not exist for a component.
+- `--fetch` — runs `git fetch origin` in each component before planning.
+  Without it, the command works from whatever was last fetched, so a
+  branch pushed to `origin` after the last fetch will not be found.
+- `--dry-run` — prints the plan and stops before touching anything.
+
+### Design points and why
+
+- **Two passes.** The first pass decides everything and writes nothing;
+  the second pass performs the checkouts. A run that failed halfway
+  through would leave some components on the new branch and some on the
+  old one — the state that is hardest to notice and hardest to recover
+  from.
+- **Never stashes.** A component that would have to move but has
+  uncommitted changes blocks the whole operation: nothing is switched, the
+  blocked components are listed, and the command exits 1. A dirty component
+  already sitting on the target branch is left alone and blocks nothing,
+  since no checkout would touch it. It never runs `git stash`. Stash is
+  shared across worktrees of the same repository, so one session's stash
+  can be popped by another session, silently taking someone else's work.
+- **Missing or non-repository paths are skipped, not blocked.** An
+  uninitialized submodule is common, and one uninitialized submodule must
+  not stop the other components from moving.
+- **A component with neither branch blocks the operation.** If neither
+  `<branch>` nor the fallback exists for a component, the command refuses
+  rather than leaving that component on an unrelated branch — the exact
+  inconsistency `branch use` exists to prevent.
+- **Never commits, resets, or touches submodule pointers on its own.**
+  When `.gitmodules` is present, the command reports that the submodule
+  pointers now differ and leaves committing them as a separate decision.
+
 ## Updating an existing installation
 
 To bring a project's dispatcher up to date with a newer `dispatch.sh`,
@@ -115,6 +187,15 @@ Run all of these before reporting the work done:
 - Running `./dev docs` a second time in a row leaves `DEV_TOOL.md`
   unchanged — the table generation is idempotent.
 
+When `branch` is installed, also run:
+
+- `./dev branch show` lists every component with its branch and whether
+  it has uncommitted changes.
+- `./dev branch use <branch> --dry-run` against a component with
+  uncommitted changes prints that component as blocked and exits 1,
+  without switching any component and without adding anything to `git
+  stash list`.
+
 ## Rules
 
 - Never edit `.dev/dispatch.sh` inside a project. It is a copy of
@@ -133,3 +214,8 @@ Run all of these before reporting the work done:
   confirmation before acting. If it adds a flag that skips that
   confirmation, the command's `dev_describe` or the relevant `dev_verb`
   description must say so.
+- A command that changes a working tree must refuse when the tree is
+  dirty instead of stashing it, and must decide everything it is going to
+  do before it changes anything. `branch use` is the model: it plans in a
+  first pass, checks out in a second, and blocks on uncommitted changes
+  instead of running `git stash`.

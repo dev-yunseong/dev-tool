@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 #
-# 프로젝트 개발 명령어 진입점.
+# Entry point for this project's development commands.
 #
-#   ./dev                  사용할 수 있는 command 목록
-#   ./dev <command>        그 command 의 subcommand 목록
-#   ./dev <command> <sub>  실행
+#   ./dev                  list the available commands
+#   ./dev <command>        list that command's subcommands
+#   ./dev <command> <sub>  run it
 #
-# 실제 dispatch 는 .dev/dispatch.sh 가 합니다. 이 파일은 프로젝트 루트를
-# 찾아서 넘겨주기만 하므로, dispatcher 를 갱신할 때 이 파일은 건드리지
-# 않습니다.
+# .dev/dispatch.sh does the actual dispatching. This file only locates the
+# project root and hands over, so updating the dispatcher never touches it.
 
 set -euo pipefail
 

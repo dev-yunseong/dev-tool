@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 #
-# dispatch.sh - docker 와 같은 `<command> <subcommand>` 문법으로 프로젝트
-# 개발 명령어를 실행합니다.
+# dispatch.sh - runs a project's development commands under a docker-like
+# `<command> <subcommand>` grammar.
 #
-# 이 파일은 dev-tool 스킬이 배포하는 공용 runtime 입니다. 프로젝트마다
-# 달라지는 것은 .dev/commands/<command>.sh 와 .dev/config.sh 뿐이므로,
-# 이 파일은 프로젝트에서 수정하지 말고 스킬에서 통째로 갱신하십시오.
+# This file is the shared runtime the dev-tool skill ships. The only files
+# that differ per project are .dev/commands/<command>.sh and .dev/config.sh,
+# so do not edit this one inside a project: replace it wholesale from the
+# skill instead.
 #
-# command 파일 하나가 command 하나입니다. 파일은 세 가지를 정의합니다.
+# One command file is one command. It defines three functions:
 #
-#   dev_describe          command 한 줄 설명을 출력
-#   dev_verbs             dev_verb <이름> <인자> <설명> 을 subcommand 마다 호출
-#   dev_run <sub> [args]  실제 실행
+#   dev_describe          echo the command's one-line description
+#   dev_verbs             call dev_verb <name> <arguments> <description> per subcommand
+#   dev_run <sub> [args]  do the work
 #
-# dispatcher 가 목록과 문서를 만들 때 command 파일을 source 하므로, 파일의
-# 최상위에서는 함수와 변수 정의만 하고 부수 효과를 내면 안 됩니다.
+# The dispatcher sources a command file whenever it builds a listing or the
+# documentation table, so a command file's top level must define functions
+# and variables only, and must have no side effects.
 
 set -euo pipefail
 
@@ -28,7 +30,8 @@ DOC_FILE="$DEV_ROOT/DEV_TOOL.md"
 DOC_START='<!-- dev:commands:start -->'
 DOC_END='<!-- dev:commands:end -->'
 
-# 프로젝트가 이름과 한 줄 소개를 바꾸고 싶을 때만 .dev/config.sh 를 둡니다.
+# .dev/config.sh is optional. A project adds one only to change the display
+# name and the one-line tagline.
 DEV_NAME='./dev'
 DEV_TAGLINE='프로젝트 개발 명령어'
 # shellcheck source=/dev/null
@@ -38,29 +41,32 @@ BUILTINS='help docs'
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-# --- command 파일이 쓰는 helper -----------------------------------------------
+# --- helpers a command file can use ------------------------------------------
 #
-# 묻고 저장하는 일은 command 마다 다시 짜면 매번 틀립니다. 특히 비대화형에서
-# 멈춰버리는 것과 secret 을 화면에 찍는 것, 두 가지가 반복해서 납니다.
-# 그래서 dispatcher 가 네 개를 제공합니다.
+# Asking for input and persisting a setting go wrong in a slightly different
+# way every time they are written from scratch. Two failures repeat: hanging
+# on a prompt in a non-interactive run, and printing a secret. The dispatcher
+# provides these six so each command file does not solve them again.
 
-# 사람에게 물어볼 수 있는 상황인지. stdout 이 pipe 로 넘어가도 물어볼 수 있게
-# stdin 대신 /dev/tty 를 봅니다.
+# Whether there is a person to ask. It looks at /dev/tty rather than stdin so
+# a prompt still works when stdout is piped somewhere else.
 dev_interactive() {
-  # [ -r /dev/tty ] 로는 안 됩니다. terminal 에 붙어 있지 않은 process 에서도
-  # /dev/tty 는 파일로 존재해서 검사를 통과하고, 실제로 열 때 가서야
-  # "No such device or address" 로 실패합니다. 그래서 직접 열어봅니다.
+  # [ -r /dev/tty ] is not enough. A process with no controlling terminal
+  # still has /dev/tty present as a file node, so that test passes and the
+  # failure only arrives at open time as "No such device or address".
+  # Opening it is the only reliable check.
   { : < /dev/tty; } 2>/dev/null || return 1
   { : > /dev/tty; } 2>/dev/null || return 1
   return 0
 }
 
-# dev_ask <변수이름> <물음> [기본값]
-# 답을 그 이름의 변수에 넣습니다: dev_ask name '이름' 'game'; echo "$name"
+# dev_ask <variable-name> <question> [default]
+# Stores the answer in the named variable: dev_ask name 'Name' 'game'; echo "$name"
 #
-# stdout 으로 돌려주지 않는 이유가 있습니다. name=$(dev_ask ...) 로 쓰면
-# subshell 이 하나 생겨서, 그 안에서 die 를 불러도 바깥 script 는 멈추지
-# 않고 빈 값을 들고 그냥 갑니다.
+# It stores instead of printing for a correctness reason. Written as
+# name=$(dev_ask ...), the call runs in a command substitution subshell, so a
+# die inside it exits only that subshell: the caller carries on with an empty
+# value and exit status 0.
 dev_ask() {
   [ $# -ge 2 ] || die "dev_ask takes a variable name and a question"
   local name=$1 question=$2 fallback=${3:-} answer
@@ -84,9 +90,9 @@ dev_ask() {
   printf -v "$name" '%s' "$answer"
 }
 
-# dev_ask_secret <변수이름> <물음>
-# 입력을 화면에 찍지 않고, 그 이름의 변수에 넣습니다. 받은 값은 절대 다시
-# 출력하지 마십시오.
+# dev_ask_secret <variable-name> <question>
+# Reads with terminal echo off and stores into the named variable. Never print
+# a value that came from this.
 dev_ask_secret() {
   [ $# -eq 2 ] || die "dev_ask_secret takes a variable name and a question"
   local name=$1 question=$2 answer
@@ -110,9 +116,9 @@ dev_assert_variable_name() {
   esac
 }
 
-# dev_confirm <물음>
-# yes 면 0, 아니면 1. 비대화형에서는 묻지 않고 1 을 돌려주므로, 위험한 일은
-# 확인 없이 진행되지 않습니다.
+# dev_confirm <question>
+# Returns 0 on yes, 1 otherwise. With no terminal it returns 1 without asking,
+# so an unattended run never takes the dangerous branch.
 dev_confirm() {
   local question=$1 answer
 
@@ -126,10 +132,10 @@ dev_confirm() {
   esac
 }
 
-# dev_config_set <파일> <키> <값>
-# KEY=값 형태의 파일에 한 줄을 씁니다. 키가 이미 있으면 그 줄을 바꾸고, 없으면
-# 뒤에 붙입니다. 파일을 새로 만들 때는 0600 으로 만듭니다. 기존 파일은
-# 내용만 덮어써서 권한을 그대로 둡니다.
+# dev_config_set <file> <key> <value>
+# Writes one KEY=value line: replaces the existing line for that key, appends
+# when there is none. A file it creates starts at mode 0600. An existing file
+# has its contents rewritten in place, so its permissions survive.
 dev_config_set() {
   [ $# -eq 3 ] || die "dev_config_set takes 3 arguments: file, key, value"
   local file=$1 key=$2 value=$3
@@ -155,8 +161,8 @@ dev_config_set() {
   rm -f "$temporary"
 }
 
-# dev_config_get <파일> <키>
-# 값을 stdout 으로. 키가 없으면 아무것도 내지 않고 1 을 돌려줍니다.
+# dev_config_get <file> <key>
+# Prints the value. Returns 1 with no output when the file or the key is absent.
 dev_config_get() {
   [ $# -eq 2 ] || die "dev_config_get takes 2 arguments: file, key"
   local file=$1 key=$2 value
@@ -171,7 +177,7 @@ dev_config_get() {
   printf '%s\n' "$value"
 }
 
-# --- command 파일 ------------------------------------------------------------
+# --- command files -----------------------------------------------------------
 
 list_commands() {
   local file
@@ -181,7 +187,7 @@ list_commands() {
   done
 }
 
-# 수집한 subcommand. load_command 이 매번 비우고 다시 채웁니다.
+# Collected subcommands. load_command clears and refills these on every call.
 VERB_NAMES=()
 VERB_ARGS=()
 VERB_TEXTS=()
@@ -209,8 +215,9 @@ load_command() {
 }
 
 describe_command() {
-  # 목록을 만드는 중이므로 깨진 파일 하나가 전체 목록을 막지 않도록 subshell
-  # 에서 읽고, 설명이 없으면 빈 줄로 둡니다.
+  # This runs while building a listing, so read the file in a subshell: one
+  # broken command file must not take down the whole listing. A file with no
+  # dev_describe yields an empty line.
   ( load_command "$1" >/dev/null 2>&1 || exit 0
     declare -F dev_describe >/dev/null && dev_describe ) 2>/dev/null || true
 }
