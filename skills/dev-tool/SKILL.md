@@ -60,7 +60,9 @@ script path is not a reason to wrap it.
    `<root>/.dev/commands/branch.sh` when the project has more than one
    component whose branches move independently — submodules, or sibling
    repositories listed in `.dev/config.sh`. A single-repository project
-   does not need it. See "The `branch` command" below.
+   does not need it. See "The `branch` command" below. When you install
+   it, add `.dev/branches/` to the project's `.gitignore`; see
+   "`branch save` writes local files" below for why.
 8. Run `./dev docs` to fill the command table in `DEV_TOOL.md`.
 
 Do not edit anything under `templates/` while installing — copy from it.
@@ -181,6 +183,20 @@ an empty one behind.
 `<name>` is checked against `[A-Za-z0-9._-]`, and `.` and `..` are
 rejected outright, so a name cannot escape `.dev/branches/`. `./dev
 branch save ../escape` exits 1 and names the rule in its message.
+
+#### `branch save` writes local files
+
+Add `.dev/branches/` to the project's `.gitignore` when installing
+`branch.sh`. A saved combination names the feature branches one person is
+working on, which is theirs and not the project's, and it goes stale the
+moment those branches are merged or deleted.
+
+The rule has to be written explicitly. Saved combinations carry no file
+extension, so a `.gitignore` that already covers `*.env` or similar
+patterns does not catch them, and they would otherwise show up as
+untracked files for every person who runs `branch save`. Check with
+`git check-ignore -v .dev/branches/example` after adding the rule; it
+should print the `.gitignore` line that matches.
 
 ### `branch load <name> [--fetch] [--dry-run]`
 
