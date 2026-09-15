@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+#
+# 프로젝트 개발 명령어 진입점.
+#
+#   ./dev                  사용할 수 있는 command 목록
+#   ./dev <command>        그 command 의 subcommand 목록
+#   ./dev <command> <sub>  실행
+#
+# 실제 dispatch 는 .dev/dispatch.sh 가 합니다. 이 파일은 프로젝트 루트를
+# 찾아서 넘겨주기만 하므로, dispatcher 를 갱신할 때 이 파일은 건드리지
+# 않습니다.
+
+set -euo pipefail
+
+self=${BASH_SOURCE[0]}
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case $target in
+    /*) self=$target ;;
+    *) self=$(dirname -- "$self")/$target ;;
+  esac
+done
+
+DEV_ROOT=$(cd -- "$(dirname -- "$self")" && pwd)
+export DEV_ROOT
+
+exec bash "$DEV_ROOT/.dev/dispatch.sh" "$@"
