@@ -18,7 +18,7 @@
 # documentation table, so a command file's top level must define functions
 # and variables only, and must have no side effects.
 
-set -euo pipefail
+set -Eeuo pipefail
 
 [ -n "${DEV_ROOT:-}" ] || {
   printf 'error: DEV_ROOT is empty. Run the project'"'"'s ./dev launcher instead of this file.\n' >&2
@@ -43,7 +43,27 @@ BUILTINS='help docs complete'
 # offered as a completion for neither itself nor anything else.
 COMPLETABLE_BUILTINS='help docs'
 
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+# Names the current step too, when a command declared one. Output between the
+# ==> line and the failure can run long enough to push it off the screen.
+die() {
+  printf 'error: %s\n' "$*" >&2
+  [ -n "${DEV_CURRENT_STEP:-}" ] && printf '실패한 단계: %s\n' "$DEV_CURRENT_STEP" >&2
+  exit 1
+}
+
+# The step a command is currently on, set by dev_step. Empty until a command
+# declares one, so a command that does not use steps prints nothing extra.
+DEV_CURRENT_STEP=''
+
+# Attribution for a failure that never reaches die: a command run by a command
+# file fails, set -e ends the script, and without this the person sees the
+# tool's own error with nothing saying which step it belonged to.
+dev_on_error() {
+  [ -n "$DEV_CURRENT_STEP" ] || return 0
+  printf '\n실패한 단계: %s (exit %s)\n' "$DEV_CURRENT_STEP" "$1" >&2
+  return 0
+}
+trap 'dev_on_error $?' ERR
 
 # --- helpers a command file can use ------------------------------------------
 #
@@ -179,6 +199,69 @@ dev_config_get() {
 
   [ -n "$value" ] || return 1
   printf '%s\n' "$value"
+}
+
+# --- running several steps ---------------------------------------------------
+#
+# A command that stands up an environment runs many things in order, and the
+# two failures that make those hard to use are always the same: the output
+# does not say which step broke, and a step starts before the thing it needs
+# is ready. These cover both.
+
+# dev_step <label>
+# Announces a step and makes it the one a failure is attributed to, whether
+# the failure goes through die or ends the script some other way.
+dev_step() {
+  [ $# -ge 1 ] || die "dev_step takes a label"
+  DEV_CURRENT_STEP=$1
+  printf '==> %s\n' "$1" >&2
+}
+
+# dev_steps_done
+# Clears the current step. Call it once the last step has succeeded, so a
+# later failure is not blamed on a step that already finished.
+dev_steps_done() {
+  DEV_CURRENT_STEP=''
+}
+
+# dev_require <executable> [hint]
+# Stops with an actionable message when a prerequisite is missing, instead of
+# letting the first use fail with "command not found" halfway through a step.
+dev_require() {
+  [ $# -ge 1 ] || die "dev_require takes an executable name"
+  local tool=$1 hint=${2:-}
+
+  command -v "$tool" >/dev/null 2>&1 && return 0
+
+  if [ -n "$hint" ]; then
+    die "$tool: 실행 파일을 찾지 못했습니다. $hint"
+  fi
+  die "$tool: 실행 파일을 찾지 못했습니다."
+}
+
+# dev_wait_for <label> <seconds> <command...>
+# Polls <command> once a second until it succeeds, or dies after <seconds>.
+# Starting a database container is not the same as the database accepting
+# connections, so anything that follows one has to wait for readiness rather
+# than for the start command to return.
+dev_wait_for() {
+  [ $# -ge 3 ] || die "dev_wait_for takes a label, a timeout in seconds, and a command"
+  local label=$1 timeout=$2
+  shift 2
+
+  case $timeout in
+    ''|*[!0-9]*) die "dev_wait_for timeout must be a whole number of seconds: $timeout" ;;
+  esac
+
+  local waited=0
+  # The check runs in a while condition, so its failures are exempt from
+  # set -e and from the ERR trap, which is what lets it be polled at all.
+  while ! "$@" >/dev/null 2>&1; do
+    waited=$((waited + 1))
+    [ "$waited" -lt "$timeout" ] ||
+      die "$label: ${timeout}초 안에 준비되지 않았습니다."
+    sleep 1
+  done
 }
 
 # --- command files -----------------------------------------------------------
