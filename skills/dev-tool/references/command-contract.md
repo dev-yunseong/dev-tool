@@ -9,12 +9,20 @@ itself. Read it before writing or editing any command file.
 `.dev/commands/<name>.sh` is one command. The file name, without the `.sh`
 extension, is the command name — `.dev/commands/db.sh` gives `./dev db`.
 
-`help` and `docs` are reserved by the dispatcher itself. A command file may
-not take either name. The dispatcher enforces this before it does anything
-else: if `.dev/commands/help.sh` or `.dev/commands/docs.sh` exists, every
+`help`, `docs`, and `complete` are reserved by the dispatcher itself. A
+command file may not take any of these three names. The dispatcher enforces
+this before it does anything else: if `.dev/commands/help.sh`,
+`.dev/commands/docs.sh`, or `.dev/commands/complete.sh` exists, every
 `./dev` invocation exits 1 and names the offending file. Without that check
 such a file would appear in the root listing and never run, because the
 built-in handler claims the name first.
+
+`complete` differs from the other two in one respect: it never appears in
+`./dev help`'s root listing, because it is plumbing for a shell completion
+script, not a command a person types by hand. `help` and `docs` are
+commands a person does type, so `./dev help`'s root listing names both of
+them explicitly. See "Tab completion: `./dev complete`" below for what
+`complete` does.
 
 ## The three functions
 
@@ -226,6 +234,42 @@ down `./dev`'s own listing. `dev_run` itself is not protected that way: it
 runs for real, in the dispatcher's own shell, exactly once, for the
 subcommand the user asked for.
 
+### The `declare`-at-top-level trap
+
+The dispatcher sources a command file from inside its own `load_command`
+function (`source "$file"`, called from `load_command`). That means a
+command file's top level does not run in the dispatcher's outer shell — it
+runs inside `load_command`. A `declare` at the file's top level therefore
+creates a variable local to `load_command`, not a variable that survives
+until `dev_run` is called: `load_command` returns, the declaration goes
+with it, and by the time `dev_run` runs, the name is gone.
+
+`.dev/commands/branch.sh` hit this directly. It first declared its
+per-component state with `declare -A WANTED` at the file's top level, and
+the first assignment into it, `WANTED[alpha]=...`, failed with `alpha:
+unbound variable`. The array had lost its associative attribute along with
+its scope, so `WANTED[alpha]=...` was parsed as an indexed array
+subscript rather than an associative-array key, and under `set -u` the
+bare word `alpha` was read as a variable reference — one that was never
+set. The error names a value, not a variable, which is not self-explaining
+on its own; the actual defect is the `declare` at the top level, not
+anything wrong with `alpha`.
+
+The fix was to move the `declare` inside the functions that use the
+state — `local -A WANTED=()` inside `branch_use` and inside `branch_load` —
+rather than at the file's top level. Bash's dynamic scoping then makes
+each caller's locals visible to `branch_apply_plan`, which both `branch_use`
+and `branch_load` call, without the state needing to be global.
+
+The rule for any command file: never use `declare` at the file's top level
+to create state you expect to survive past that one `source` call.
+Declare it `local` inside the function that uses it, the way `branch_use`
+and `branch_load` do, and rely on bash's dynamic scoping to make it
+visible to any function that function calls. Use `declare -g` instead only
+when the state genuinely must be global — visible across functions that do
+not call each other. Either way, never leave the `declare` sitting at the
+top level.
+
 ## How subcommand validation works
 
 After the dispatcher sources a command file for a real invocation, it has a
@@ -266,6 +310,40 @@ created or revised, and `./dev docs` never changes it — only the block
 between the markers is regenerated, and it is regenerated from scratch
 every time, so running `./dev docs` twice in a row with no command files
 changed must leave the file byte-for-byte the same.
+
+## Tab completion: `./dev complete`
+
+`./dev complete` is the interface a shell completion script uses —
+`templates/completion.bash` calls it, and calls nothing else. It prints
+names only, one per line, with no descriptions:
+
+- `./dev complete` with no arguments prints every command file's name
+  (from `.dev/commands/*.sh`), plus `help` and `docs`. `complete` is never
+  among them.
+- `./dev complete <command>` prints that command's `dev_verb` names, in the
+  order `dev_verbs` declared them. A command file with no `dev_verbs` at
+  all, or one that does not exist, prints nothing.
+- `./dev complete <command> <subcommand>` prints the long flags found in
+  that subcommand's arguments string, extracted with
+  `grep -oE '\-\-[A-Za-z][A-Za-z0-9-]*'`.
+
+An unknown command or subcommand prints nothing and exits 0 rather than
+failing — the person is still typing, so there is no error to report.
+
+The flag-extraction rule is what makes a `dev_verb` arguments string double
+as the source of flag completions, with nothing extra to write. A
+subcommand declared as:
+
+```bash
+dev_verb use '<branch> [--fallback <b>] [--fetch] [--dry-run]' 'Move every component onto <branch>'
+```
+
+gets `--fallback`, `--fetch`, and `--dry-run` completed for free, because
+each matches the `--` pattern. A command file that instead writes its
+arguments string as prose — `'(dry run)'` rather than `'[--dry-run]'` —
+gets no flag completions for that subcommand, because nothing in the
+string matches. Write the arguments string as the actual flag spelling,
+not a description of it, and flag completion follows automatically.
 
 ## Complete annotated example
 

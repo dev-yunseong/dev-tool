@@ -37,7 +37,11 @@ DEV_TAGLINE='프로젝트 개발 명령어'
 # shellcheck source=/dev/null
 [ -f "$DEV_ROOT/.dev/config.sh" ] && source "$DEV_ROOT/.dev/config.sh"
 
-BUILTINS='help docs'
+BUILTINS='help docs complete'
+
+# complete is plumbing for the shell, not something a person types, so it is
+# offered as a completion for neither itself nor anything else.
+COMPLETABLE_BUILTINS='help docs'
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
@@ -251,9 +255,15 @@ print_command_help() {
   printf '%s %s - %s\n\n' "$DEV_NAME" "$command" "$description"
   printf 'subcommand:\n'
 
-  local i
+  # Usage on one line, description indented under it. A single line cannot
+  # hold both once a subcommand declares several flags, and padding the
+  # arguments column to fit the longest one wastes the width every other row
+  # needs for its description.
+  local i usage
   for i in "${!VERB_NAMES[@]}"; do
-    printf '  %-12s %-14s %s\n' "${VERB_NAMES[$i]}" "${VERB_ARGS[$i]}" "${VERB_TEXTS[$i]}"
+    usage=${VERB_NAMES[$i]}
+    [ -n "${VERB_ARGS[$i]}" ] && usage="$usage ${VERB_ARGS[$i]}"
+    printf '  %s\n      %s\n' "$usage" "${VERB_TEXTS[$i]}"
   done
   [ "${#VERB_NAMES[@]}" -gt 0 ] || printf '  (이 command 는 subcommand 를 알려주지 않습니다.)\n'
 }
@@ -293,6 +303,42 @@ cmd_docs() {
   printf 'updated the command table in %s\n' "$DOC_FILE" >&2
 }
 
+# --- completion ---------------------------------------------------------------
+#
+# Machine-readable listings for a shell completion script: names only, one per
+# line, no descriptions and no decoration. The completion script in
+# templates/completion.bash calls these.
+
+cmd_complete() {
+  if [ $# -eq 0 ]; then
+    list_commands
+    printf '%s\n' $COMPLETABLE_BUILTINS
+    return 0
+  fi
+
+  local command=$1
+  shift
+
+  # An unknown command is not an error here. The person is still typing.
+  [ -f "$COMMAND_DIR/$command.sh" ] || return 0
+  load_command "$command" >/dev/null 2>&1 || return 0
+  [ "${#VERB_NAMES[@]}" -gt 0 ] || return 0
+
+  if [ $# -eq 0 ]; then
+    printf '%s\n' "${VERB_NAMES[@]}"
+    return 0
+  fi
+
+  # Third word on: offer the flags the subcommand declared in its arguments
+  # string, e.g. '[--fallback <b>] [--fetch]' yields --fallback and --fetch.
+  local verb=$1 i
+  for i in "${!VERB_NAMES[@]}"; do
+    [ "${VERB_NAMES[$i]}" = "$verb" ] || continue
+    printf '%s\n' "${VERB_ARGS[$i]}" | grep -oE '\-\-[A-Za-z][A-Za-z0-9-]*' || true
+    return 0
+  done
+}
+
 # --- main --------------------------------------------------------------------
 
 assert_no_reserved_command_file() {
@@ -314,6 +360,7 @@ main() {
   case $command in
     help|-h|--help) print_root_help; return 0 ;;
     docs) cmd_docs; return 0 ;;
+    complete) cmd_complete "$@"; return 0 ;;
   esac
 
   [ -f "$COMMAND_DIR/$command.sh" ] || {
