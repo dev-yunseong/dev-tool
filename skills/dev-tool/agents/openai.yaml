@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dev Tool"
+  short_description: "Install or update a project's ./dev command line"
+  default_prompt: "Use $dev-tool to install or update this project's ./dev command line entry point."
