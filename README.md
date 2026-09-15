@@ -2,7 +2,9 @@
 
 dev-tool 은 프로젝트에 `./dev` 명령줄 진입점을 깔아 주는 agent skill 입니다.
 
-저장소마다 개발용 script 가 쌓입니다. agent 는 어느 script 를 어떤 flag 로 부르는지 알지만, 저장소 주인은 그걸 외우고 있지 않습니다. `.agents/skills/test-env/scripts/testenv.sh up --yes --with game,lobby` 는 agent 에게 시킬 때만 굴러가는 명령입니다. dev-tool 은 그 script 들을 docker 와 같은 문법 하나로 묶습니다.
+저장소마다 개발용 script 가 쌓입니다. agent 는 어느 script 를 어떤 flag 로 부르는지 알지만, 저장소 주인은 그걸 외우고 있지 않습니다. `.agents/skills/test-env/scripts/testenv.sh up --yes --with game,lobby` 는 agent 에게 시킬 때만 굴러가는 명령입니다.
+
+dev-tool 은 그 script 들을 docker 와 같은 문법 하나로 묶고, 순서대로 엮어 자동화하고, 테스트 환경이 없는 프로젝트에는 없는 부분을 만들어 넣습니다.
 
 ```sh
 ./dev db clone
@@ -17,6 +19,8 @@ dev-tool 은 프로젝트에 `./dev` 명령줄 진입점을 깔아 주는 agent 
 - **Ask and store** — 묻고 파일에 저장하는 helper 를 dispatcher 가 줍니다. terminal 이 없으면 멈추지 않고 실패하고, secret 은 화면에 찍지 않습니다.
 - **Branch** — component 여러 개의 branch 를 한 표로 보고 한 번에 맞춥니다. component 마다 다른 branch 를 지정할 수 있고, 조합을 이름 붙여 저장합니다.
 - **Complete** — bash 와 zsh 에서 TAB 으로 command, subcommand, flag 가 완성됩니다.
+- **Automate** — 여러 단계를 순서대로 돌리고, 실패하면 어느 단계에서 깨졌는지 말해 줍니다. 준비될 때까지 기다리는 것과 없는 도구를 미리 잡는 것도 dispatcher 가 줍니다.
+- **Test environment** — 저장소에 이미 있는 compose 파일, migration, script 를 찾아 `up` / `down` / `status` / `logs` / `reset` 한 벌로 묶습니다. 없는 부분은 저장소가 보여 주는 것에 맞춰 만들어 넣습니다.
 
 ## 설치
 
@@ -132,6 +136,29 @@ command 이름, 그 command 의 subcommand 이름, 그 subcommand 의 flag 까�
 생성하거나 caching 하는 것이 없습니다. completion 이 매번 `./dev complete` 를 되묻기 때문에, `.dev/commands/` 에 파일을 추가하면 그 즉시 완성됩니다.
 
 TAB 을 누르면 `./dev` 가 실행되고 `.dev/commands/` 의 파일을 전부 source 합니다. `./dev` 를 쓸 때 어차피 도는 코드라 이미 쓰는 프로젝트에서는 새로운 노출이 아니지만, 코드를 신뢰하지 않는 저장소에는 걸지 마십시오.
+
+## 여러 단계 엮기
+
+두 가지 이상을 순서대로 돌리는 command 는 wrapper 가 아니라 자동화이고, wrapper 에는 없는 의무가 생깁니다. dispatcher 가 그걸 helper 로 줍니다.
+
+```
+==> database container 를 띄웁니다
+==> migration 을 적용합니다
+
+실패한 단계: migration 을 적용합니다 (exit 1)
+```
+
+`dev_step` 은 단계를 알리고 실패가 어느 단계 것인지 기록합니다. `die` 를 거치든 명령이 그냥 0 아닌 값으로 끝나든 양쪽 다 잡힙니다. `dev_wait_for` 는 준비될 때까지 기다립니다 — container 를 띄우는 것과 database 가 연결을 받는 것은 다른 일이라, 다음 단계가 시작 명령의 반환만 믿으면 안 됩니다. `dev_require` 는 없는 도구를 첫 단계 전에 잡습니다.
+
+단계를 쓰지 않는 command 는 아무 영향도 받지 않습니다. 출력이 한 줄도 달라지지 않습니다.
+
+## 테스트 환경
+
+저장소를 먼저 읽습니다. compose 파일, migration 디렉터리, `Makefile` target, `package.json` script, Gradle task, `scripts/` 아래의 것들이 곧 환경이고, command 는 그것들을 감싸고 순서를 잡습니다. 이미 잘 도는 compose 파일이 있는 프로젝트에 compose 파일을 하나 더 쓰지 않습니다.
+
+비어 있는 자리는 만들어 넣습니다. 그게 wrapper 와 다른 점입니다. 다만 저장소가 실제로 보여 주는 것에서 만들지, 어떤 stack 일 거라는 추측으로 만들지 않습니다.
+
+전체 절차는 `skills/dev-tool/references/test-environment.md` 에 있습니다.
 
 ## 요구 사항
 

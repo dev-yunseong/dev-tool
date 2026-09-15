@@ -212,6 +212,137 @@ setup_target() {
 }
 ```
 
+## Running several steps
+
+Four more functions exist for a command that runs more than two things in
+order — bringing up a container, waiting for it to accept connections, then
+migrating it, say. Reach for them there. A subcommand that runs one thing
+does not need a step, and neither does one that runs two independent things
+with nothing to attribute a failure to.
+
+### `set -E`, and why it is required
+
+`dispatch.sh` runs under `set -Eeuo pipefail`, where it used to run under
+`set -euo pipefail`. The `-E` flag is what makes step attribution possible
+at all: without it, an `ERR` trap set in the main shell is not inherited by
+a function called from inside a sourced file, so a failure inside `dev_run`
+— itself a function, called after this file is sourced into the
+dispatcher's shell — would never reach the trap. A command file does not
+set `-E` itself; it is already in effect by the time `dev_run` runs. It
+matters only as a fact to know, and as a warning: a script that copies the
+dispatcher's `trap ... ERR` line without also setting `-E` gets a trap that
+never fires from inside a function.
+
+### `dev_step <label>`
+
+```bash
+dev_step 'PostgreSQL container 기동'
+```
+
+Prints `==> <label>` to stderr and records `<label>` as the step a failure
+is attributed to. Call it once before each thing you run in order; each
+call's label replaces the one before it. Three `dev_step` calls followed by
+`dev_steps_done` print exactly three `==>` lines and nothing else.
+
+### `dev_steps_done`
+
+```bash
+dev_steps_done
+```
+
+Clears the recorded step and prints nothing itself. Call it once, right
+after the last step has succeeded, so a failure that happens afterward —
+in cleanup code, or in a subcommand's own closing `echo` — is not blamed on
+a step that already finished.
+
+### `dev_require <executable> [hint]`
+
+```bash
+dev_require docker 'https://docs.docker.com/get-docker/ 에서 설치하십시오'
+```
+
+Returns 0 when `<executable>` is on `PATH`. Otherwise it calls `die` with
+`<executable>: 실행 파일을 찾지 못했습니다.`, followed by `[hint]` when one
+was given. On a missing executable, `dev_require` prints the hint and exits
+1. Call it at the start of a subcommand that depends on an external tool,
+before the first step runs, so a missing prerequisite is reported by name
+instead of surfacing later as a bare "command not found" in the middle of
+a step.
+
+### `dev_wait_for <label> <seconds> <command...>`
+
+```bash
+dev_wait_for 'PostgreSQL 준비' 30 pg_isready -h localhost -p 5432
+```
+
+Runs `<command...>` once a second until it exits 0, and returns as soon as
+that happens. If `<seconds>` elapses first, it calls `die` with
+`<label>: <seconds>초 안에 준비되지 않았습니다.` `<seconds>` must be a
+whole number of seconds; anything else — empty, negative, a decimal,
+non-digit characters — dies immediately, before the first attempt.
+
+`dev_wait_for` runs the check inside a `while ! "$@" ...; do … done`
+condition. That placement is what exempts each failing attempt from
+`set -e` and from the `ERR` trap below: a command expected to fail
+repeatedly while whatever it is waiting for comes up must not trip step
+attribution on every failed attempt, only on the final timeout.
+
+### Two attribution paths
+
+A step failure reaches the terminal by one of two routes, depending on how
+the failure happened.
+
+- **Through `die`.** Something inside a step calls `die` directly, or calls
+  a helper that calls `die` on its behalf (`dev_require`, `dev_wait_for`,
+  `dev_ask` with no default, and so on). `die` prints `error: <message>`
+  and then, when a step was declared, `실패한 단계: <label>` on the next
+  line. For example, `die` called from inside the second of two declared
+  steps prints the error message and then names that second step. `die`
+  repeats the label rather than relying on the earlier `==> <label>` line,
+  because a step's own output — a `docker pull`, a migration log — can run
+  long enough to push that line off the visible screen by the time the
+  error appears.
+- **Through the `ERR` trap.** A command a step runs exits non-zero on its
+  own, without going through `die` — `/bin/false` inside the second of two
+  declared steps, for instance. `set -e` ends the script at that point, and
+  the `ERR` trap near the top of `dispatch.sh` (`trap 'dev_on_error $?'
+  ERR`) catches it, prints `실패한 단계: <label> (exit <status>)` — for
+  that example, `실패한 단계: <label> (exit 1)` — and the script exits 1.
+  This path exists because `set -e` alone gives no chance to print
+  anything before the shell exits, so without the trap a step's own failed
+  command would surface as bare output with no mention of which step it
+  belonged to.
+
+Both paths print nothing when no step was declared — `die` checks for a
+recorded label before printing its extra line, and the trap handler
+returns immediately when there is none — so a command file that never
+calls `dev_step` behaves exactly as it did before these four functions
+existed. The `ERR` trap is, in effect, opt-in: it is installed
+unconditionally for every command file, but it stays silent until that
+file calls `dev_step`.
+
+### Worked example
+
+Requires `git`, announces two steps, and waits for the second step's own
+output before finishing:
+
+```bash
+example_prepare() {
+  dev_require git 'https://git-scm.com/downloads 에서 설치하십시오'
+
+  dev_step '저장소 상태 확인'
+  git -C "$DEV_ROOT" status >/dev/null
+
+  dev_step '표시 파일 기록'
+  : > "$DEV_ROOT/.dev/prepare.stamp"
+
+  dev_wait_for '표시 파일 생성' 5 test -f "$DEV_ROOT/.dev/prepare.stamp"
+
+  dev_steps_done
+  echo 'prepare 완료'
+}
+```
+
 ## The sourcing rule, and why it matters
 
 The dispatcher sources a command file — `source "$file"` — every time it

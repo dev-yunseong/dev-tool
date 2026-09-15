@@ -16,6 +16,12 @@
 # dev_confirm, dev_config_set and dev_config_get. The full contract is in
 # references/command-contract.md; example_configure below shows them together.
 #
+# A subcommand that runs more than two things in order can use dev_step,
+# dev_steps_done, dev_require and dev_wait_for to announce each step and to
+# name the step a failure is attributed to. example_prepare below shows all
+# four together; the full contract, including the two attribution paths, is
+# in references/command-contract.md.
+#
 # Text this file prints goes to the person running the command, so the
 # descriptions and messages are written in their language, not in English.
 
@@ -30,6 +36,7 @@ dev_verbs() {
   dev_verb status     ''          '지금 상태를 보여줍니다'
   dev_verb down       ''          '내립니다'
   dev_verb configure  ''          '설정 값을 확인하고, 없으면 물어서 저장합니다'
+  dev_verb prepare    ''          'git 상태를 확인하고 표시 파일을 만듭니다'
 }
 
 dev_run() {
@@ -41,6 +48,7 @@ dev_run() {
     status)    example_status ;;
     down)      example_down ;;
     configure) example_configure ;;
+    prepare)   example_prepare ;;
     *)         die "unhandled subcommand: $verb" ;;
   esac
 }
@@ -74,4 +82,30 @@ example_configure() {
   # Report the key, not the value. A command copied from this file should not
   # learn to print what it just stored.
   echo "EXAMPLE_TOKEN 을 ${config_file#"$DEV_ROOT"/} 에 저장했습니다."
+}
+
+example_prepare() {
+  # Shows dev_require, dev_step, dev_wait_for and dev_steps_done together.
+  # This does not stand up a real service: it checks git is present, runs two
+  # trivial steps in order, and waits for the file the second step created.
+  # A real command follows the same shape for a container, a migration, or
+  # anything else that runs more than two things in order.
+  local stamp_file="$DEV_ROOT/.dev/example.stamp"
+
+  dev_require mkdir 'coreutils 가 설치되어 있어야 합니다'
+
+  # Nothing here assumes anything about the project. The template is copied
+  # into repositories of every shape, so an example that only works inside a
+  # git repository, or only with a container runtime running, fails the first
+  # time someone tries it.
+  dev_step '작업 디렉터리 확인'
+  [ -d "$DEV_ROOT/.dev" ] || die ".dev 디렉터리가 없습니다."
+
+  dev_step '표시 파일 생성'
+  : > "$stamp_file"
+
+  dev_wait_for '표시 파일 확인' 5 test -f "$stamp_file"
+
+  dev_steps_done
+  echo "prepare 완료: ${stamp_file#"$DEV_ROOT"/} 을 만들었습니다."
 }
