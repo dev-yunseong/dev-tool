@@ -18,6 +18,7 @@ dev-tool 은 그 script 들을 docker 와 같은 문법 하나로 묶고, 순서
 - **Document** — `./dev docs` 가 `DEV_TOOL.md` 의 명령어 표를 command 파일에서 다시 만듭니다. 설명이 한 곳에만 있으니 문서가 코드와 어긋나지 않습니다.
 - **Ask and store** — 묻고 파일에 저장하는 helper 를 dispatcher 가 줍니다. terminal 이 없으면 멈추지 않고 실패하고, secret 은 화면에 찍지 않습니다.
 - **Branch** — component 여러 개의 branch 를 한 표로 보고 한 번에 맞춥니다. component 마다 다른 branch 를 지정할 수 있고, 조합을 이름 붙여 저장합니다.
+- **Environment profile** — 환경 변수를 이름별로 로컬에 저장하고, 지정한 profile 로 명령을 실행합니다. 저장한 값은 목록이나 조회에 나오지 않습니다.
 - **Complete** — bash 와 zsh 에서 TAB 으로 command, subcommand, flag 가 완성됩니다.
 - **Automate** — 여러 단계를 순서대로 돌리고, 실패하면 어느 단계에서 깨졌는지 말해 줍니다. 준비될 때까지 기다리는 것과 없는 도구를 미리 잡는 것도 dispatcher 가 줍니다.
 - **Test environment** — 저장소에 이미 있는 compose 파일, migration, script 를 찾아 `up` / `down` / `status` / `logs` / `reset` 한 벌로 묶습니다. 없는 부분은 저장소가 보여 주는 것에 맞춰 만들어 넣습니다.
@@ -52,6 +53,7 @@ skill 이 프로젝트에 까는 것:
 | `.dev/commands/*.sh` | 그 프로젝트의 command. |
 | `.dev/completion.bash` | bash 와 zsh 용 TAB completion (선택). |
 | `.dev/branches/<이름>` | `branch save` 가 남기는 component 별 branch 조합. |
+| `.dev/environments/<profile>.env` | `env` command 의 로컬 환경 변수 profile (선택, Git 제외). |
 | `DEV_TOOL.md` | 한글 사용 설명. 명령어 표는 `./dev docs` 가 만듭니다. |
 
 ## command 파일
@@ -123,6 +125,40 @@ origin 에만 있는 branch 는 tracking branch 로 만듭니다. component 목�
 
 경로가 없거나 git 저장소가 아닌 component 는 막지 않고 건너뜁니다. 초기화하지 않은 submodule 하나 때문에 나머지를 못 옮기면 안 되기 때문입니다.
 
+## 환경 변수 profile
+
+환경별로 다른 값을 저장하려면 `skills/dev-tool/templates/commands/env.sh` 를
+프로젝트의 `.dev/commands/env.sh` 로 복사합니다. **첫 profile 을 만들기 전에**
+`.dev/environments/` 를 프로젝트의 `.gitignore` 에 추가하고
+`git check-ignore .dev/environments/local.env` 로 확인하십시오. dispatcher 를
+고칠 필요는 없습니다. 설치 후 `./dev docs` 로 명령어 표를 갱신합니다.
+
+```sh
+./dev env create local
+./dev env set local DATABASE_URL
+./dev env list
+./dev env show local
+./dev env run local -- ./dev server up
+```
+
+`set` 은 입력한 값이 보이지 않는 prompt 를 엽니다. 값은 명령 인자로 받지
+않습니다. 자동화에서는 값을 출력하는 도구를
+`./dev env set local DATABASE_URL --stdin` 에 연결하면 한 줄을 읽습니다.
+`list` 는 profile 이름만, `show` 는 모든 값을 `KEY=<hidden>` 으로 표시합니다.
+
+profile 이름은 `[A-Za-z0-9][A-Za-z0-9_-]*` 형식입니다. 파일은
+`.dev/environments/<profile>.env` 에 mode `0600` 으로 생성하며, Git 에서
+제외되고 추적되지 않는 파일만 사용합니다. 각 줄은 `KEY=value` 이고 빈 줄과
+`#` 으로 시작하는 주석을 허용합니다. 값은 한 줄이며 `=` 와 공백도 그대로
+저장합니다. 따옴표, 변수 치환, `export`, shell 실행 문법은 해석하지 않습니다.
+잘못된 줄이나 중복 key 가 있으면 값을 출력하지 않고 명령 실행 전에 실패합니다.
+
+profile 은 실행할 때마다 명시합니다. 기본 profile 을 자동으로 선택하지
+않습니다. `run` 은 실행한 process 에서만 같은 이름의 기존 환경 변수를
+덮어쓰며, profile 에 없는 환경 변수는 기존 값을 유지합니다. container 안에서
+값이 필요하면 기존 도구가 그 환경 변수를 container 로 전달하도록 별도로
+설정해야 합니다.
+
 ## Tab completion
 
 ```sh
@@ -163,6 +199,13 @@ TAB 을 누르면 `./dev` 가 실행되고 `.dev/commands/` 의 파일을 전부
 ## 요구 사항
 
 - bash 와 awk. 그 외 의존성은 없습니다.
+- 선택 사항인 `branch` 와 `env` command 는 Git 도 필요합니다.
+
+환경 변수 profile 의 통합 테스트는 Python 3 으로 실행합니다.
+
+```sh
+python3 -m unittest discover -s tests -v
+```
 
 ## 주의할 점
 

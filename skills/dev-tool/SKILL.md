@@ -2,8 +2,9 @@
 name: dev-tool
 description: >
   Installs or refreshes a ./dev command line entry point for a project: a
-  docker-like `./dev <command> <subcommand> [options]` grammar that wraps
-  existing scripts, composes them into ordered automation, and stands up a
+  docker-like command and subcommand grammar that wraps existing scripts,
+  composes them into ordered automation, runs commands with named environment
+  profiles, and stands up a
   local test environment — writing the missing pieces when the project does
   not already have them — so the person who owns the repository can run
   development work by hand instead of by script path. Use it to make a
@@ -76,7 +77,13 @@ script path is not a reason to wrap it.
    does not need it. See "The `branch` command" below. When you install
    it, add `.dev/branches/` to the project's `.gitignore`; see
    "`branch save` writes local files" below for why.
-8. Run `./dev docs` to fill the command table in `DEV_TOOL.md`.
+8. Optionally copy `templates/commands/env.sh` to
+   `<root>/.dev/commands/env.sh` when the project needs named local
+   environment profiles. Before creating any profile, add
+   `.dev/environments/` to the project's `.gitignore` and verify it with
+   `git check-ignore .dev/environments/local.env`. See "The `env` command"
+   below. This command needs no dispatcher changes.
+9. Run `./dev docs` to fill the command table in `DEV_TOOL.md`.
 
 Do not edit anything under `templates/` while installing — copy from it.
 
@@ -378,6 +385,44 @@ the branch it recorded.
 - **Never commits, resets, or touches submodule pointers on its own.**
   When `.gitmodules` is present, the command reports that the submodule
   pointers now differ and leaves committing them as a separate decision.
+
+## The `env` command
+
+`templates/commands/env.sh` is an optional command file for named local
+environment profiles. Copy it rather than implementing another loader.
+
+```sh
+./dev env create local
+./dev env set local DATABASE_URL
+./dev env list
+./dev env show local
+./dev env run local -- ./dev server up
+```
+
+- `create <profile>` creates `.dev/environments/<profile>.env` at mode
+  `0600`. Profile names must match `[A-Za-z0-9][A-Za-z0-9_-]*`.
+- `set <profile> <KEY>` asks for a single-line value with terminal echo
+  disabled. `set <profile> <KEY> --stdin` reads one line from standard
+  input for automation. Never pass a value as a command argument.
+- `list` prints profile names only; `show <profile>` prints each key as
+  `KEY=<hidden>`, masking every value.
+- `run <profile> -- <command> [args...]` applies the selected profile only
+  to the launched process. Profile values override inherited values with
+  the same key; absent keys stay inherited. There is no implicit default
+  or automatic profile selection.
+
+Profile files must be gitignored and untracked. Add `.dev/environments/`
+to the project's `.gitignore` before creating one. The format is literal
+`KEY=value`, with blank lines and lines starting with `#` allowed. Values
+are single-line; spaces and `=` remain literal. Never source these files:
+there is no quote processing, interpolation, `export`, or shell evaluation.
+An invalid file or duplicate key fails before execution without printing
+values.
+
+Document how the project's existing tool forwards environment variables
+into containers when needed. Launching that tool with a profile does not
+itself configure container environment forwarding. Keep the environment
+profile section in `DEV_TOOL.md` only when this command is installed.
 
 ## Tab completion
 
